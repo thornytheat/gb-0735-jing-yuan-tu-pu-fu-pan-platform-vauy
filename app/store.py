@@ -27,6 +27,17 @@ class RunStore:
                     pinned TEXT NOT NULL
                 )
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS wafer_recoveries (
+                    recovery_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    manifest TEXT NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    detail TEXT NOT NULL
+                )
+            """)
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS wafer_recoveries_by_run ON wafer_recoveries(run_id)")
 
     def put(self, manifest, snapshot, pinned):
         with self.connect() as connection:
@@ -50,4 +61,33 @@ class RunStore:
     def list(self):
         with self.connect() as connection:
             rows = connection.execute("SELECT manifest FROM wafer_runs ORDER BY rowid DESC").fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def put_recovery(self, manifest, snapshot, detail):
+        """Commit one recovery edition atomically; identical keys never duplicate."""
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO wafer_recoveries VALUES (?, ?, ?, ?, ?) ON CONFLICT(recovery_id) DO NOTHING",
+                (manifest["recovery_id"], manifest["run_id"], canonical(manifest),
+                 canonical(snapshot), canonical(detail)),
+            )
+            created = cursor.rowcount == 1
+            row = connection.execute("SELECT manifest FROM wafer_recoveries WHERE recovery_id = ?",
+                                     (manifest["recovery_id"],)).fetchone()
+        return json.loads(row[0]), created
+
+    def get_recovery(self, recovery_id):
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT manifest, snapshot, detail FROM wafer_recoveries WHERE recovery_id = ?",
+                (recovery_id,)).fetchone()
+        if row is None:
+            raise ReviewError("RECOVERY_NOT_FOUND", "边缘收回结论未找到", 404)
+        return tuple(json.loads(part) for part in row)
+
+    def list_recoveries(self, run_id):
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT manifest FROM wafer_recoveries WHERE run_id = ? ORDER BY rowid DESC",
+                (run_id,)).fetchall()
         return [json.loads(row[0]) for row in rows]

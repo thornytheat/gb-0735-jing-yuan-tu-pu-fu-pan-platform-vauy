@@ -27,6 +27,23 @@
 
 簇由最终 `FAIL` 芯粒沿上、下、左、右连接，同片计算。簇号按成员中最北、再最西的位置顺序生成。每簇带包围盒、成员、最终分档分布与证据行。冲突、待测和复测转通过的点都会阻断邻接。
 
+## 边缘收回
+
+边缘保留带中的每个位置按本片原始行单独复核，不改动原归档。判定只看可解析测值，测次按数值排序：
+
+| 复测状态 | 条件 | 建议 |
+|---|---|---|
+| `RECOVERED` | 最大有效测次为通过 | 可收回 |
+| `EDGE_FAILURE` | 最大有效测次为失败，且末尾没有连续第二次失败 | 保留 |
+| `REPEATED_EDGE_FAILURE` | 末尾连续两次及以上失败 | 保留 |
+| `EDGE_CONFLICT` | 最大有效测次同次矛盾 | 保留 |
+| `BAD_EDGE_MEASUREMENT` | 有行但无可采测值 | 保留 |
+| `NO_EDGE_EVIDENCE` | 该边缘位没有任何原始行 | 保留 |
+
+只有 `RECOVERED` 能被选入收回；其余状态即使被提交也拒绝。收回选择为空时复算结果与原归档逐字节一致。收回把选中位置并入有效集合，按末次裁决结果（不强制通过）计入有效、通过、失败、待测或冲突，再按既有规则重算缺陷簇、批良率与台账差值；原归档、原行和原摘要不变。
+
+结论身份由收回规则版本、运行规则版本、基准运行号、基准结果摘要与排序后的收回位共同决定，同一输入重复提交只保留一版。结论与派生快照在同一事务写入，写入中断不留下半份结论，重试安全。导出包含基准清单、原始输入、派生快照与逐枚依据，摘要不符时拒绝导出。
+
 ## 核验与归档
 
 - `valid = passed + failed + pending + conflict`，另以有效位坐标集合对照裁决键，报告缺位和多位。
@@ -44,6 +61,7 @@
 | 对表 | `UNKNOWN_WAFER` 未登记片号、`BAD_COORDINATE` 非法坐标 |
 | 掩模 | `OUT_OF_GRID` 阵列外、`OUTSIDE_DISC` 圆片外、`EDGE_EXCLUSION` 边缘带、`NOTCH_VOID` 缺口空位 |
 | 裁决 | `BAD_ATTEMPT` 测次无效、`NO_RESULT` 空测、`BAD_RESULT` 判定无效、`BAD_BIN` 分档不符、`SAME_ATTEMPT_CONFLICT` 同次矛盾、`DUPLICATE_RESULT` 同次同值 |
+| 收回 | `RECOVERED` 边缘复测通过、`EDGE_FAILURE` 边缘失效、`REPEATED_EDGE_FAILURE` 边缘连续失效、`EDGE_CONFLICT` 边缘复测冲突、`BAD_EDGE_MEASUREMENT` 边缘测值无效、`NO_EDGE_EVIDENCE` 边缘无复测依据、`NOT_SELECTED` 未选收回 |
 
 ## 已知范围
 

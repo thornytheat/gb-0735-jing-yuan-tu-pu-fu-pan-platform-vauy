@@ -7,6 +7,10 @@ export const labels = {
   EDGE_EXCLUSION: '边缘保留带', NOTCH_VOID: '缺口空位', OUTSIDE_DISC: '圆片外',
   OUT_OF_GRID: '超出阵列', MATCH: '一致', REVIEW: '台账有差异', DIFFERENCE: '有差异',
   MISSING_REFERENCE: '缺交接台账', UNBALANCED: '阵列或行数失衡',
+  RECOVER: '建议收回', RETAIN: '建议保留',
+  RECOVERED: '边缘复测通过', EDGE_FAILURE: '边缘失效', REPEATED_EDGE_FAILURE: '边缘连续失效',
+  EDGE_CONFLICT: '边缘复测冲突', NO_EDGE_EVIDENCE: '边缘无复测依据', BAD_EDGE_MEASUREMENT: '边缘测值无效',
+  NOT_SELECTED: '未选收回',
 };
 
 export function element(tag, value, className) {
@@ -104,7 +108,7 @@ function evidenceCard(row) {
   return card;
 }
 
-export function renderCell(box, cell) {
+export function renderCell(box, cell, extra = null) {
   const decision = cell.decision;
   const heading = element('div', null, 'detail-title');
   heading.append(element('strong', vector([cell.x, cell.y])), status(decision?.result ?? cell.eligibility));
@@ -116,6 +120,7 @@ export function renderCell(box, cell) {
   }
   for (const row of cell.evidence) box.append(evidenceCard(row));
   if (!cell.evidence.length) box.append(element('p', '该位置暂无原始行。', 'empty'));
+  if (extra) box.append(extra);
 }
 
 async function intake({api, base}) {
@@ -276,7 +281,7 @@ function auditView({audit, signal}) {
   draw();
 }
 
-function runs({run, manifests}) {
+function runs({run, manifests, api, base, signal}) {
   text('#history-total', `${manifests.length} 批`);
   table(q('#history-rows'), manifests, [
     ['运行号', (item) => {
@@ -292,6 +297,239 @@ function runs({run, manifests}) {
   table(q('#run-sources'), Object.entries(run.sources).map(([name, value]) => ({name, ...value})), [
     ['图档', 'name', 'mono'], ['字节', 'bytes', 'num'], ['SHA-256', 'sha256', 'mono'],
   ]);
+  const target = q('#run-recoveries');
+  target.replaceChildren(element('p', '正在读取收回结论…', 'empty'));
+  api(`${base}/recovery`).then((preview) => {
+    if (signal.aborted) return;
+    text('#run-recovery-total', `${preview.editions.length} 版`);
+    if (!preview.editions.length) {
+      target.replaceChildren(element('p', '本部图批尚未发布边缘收回结论。', 'empty'));
+      return;
+    }
+    table(target, preview.editions, [
+      ['结论号', (item) => {
+        const link = element('a', item.recovery_id.slice(0, 12), 'row-link');
+        link.href = `/edge?${new URLSearchParams({run: run.run_id, edition: item.recovery_id})}`;
+        return link;
+      }, 'mono'],
+      ['收回', 'recovered', 'num'], ['保留', 'retained', 'num'],
+      ['批良率 %', (item) => item.summary.yield_pct ?? '—', 'num'],
+      ['状态', (item) => status(item.status)], ['生成 UTC', 'created_at', 'mono'],
+    ]);
+  }).catch((error) => { if (!signal.aborted) failure(target, error); });
 }
 
-export const views = {intake, coordinates, retest, clusters, yield: auditView, runs};
+const recoveryState = {picked: new Set(), preview: null, runId: null, signal: null};
+
+function pointKey(cell) { return `${cell.wafer}|${cell.x}|${cell.y}`; }
+function pointText(cell) { return `${cell.wafer} ${vector([cell.x, cell.y])}`; }
+
+function drawCandidates() {
+  const {preview, picked} = recoveryState;
+  const rows = preview.cells.filter((cell) => cell.evidence.length || cell.recommend === 'RECOVER');
+  text('#recovery-scope', `${preview.wafers.reduce((sum, wafer) => sum + wafer.edge_cells, 0)} 格 · 可收回 ${preview.recoverable.length} 枚`);
+  table(q('#recovery-candidates'), rows, [
+    ['收回', (cell) => {
+      const box = element('input');
+      box.type = 'checkbox';
+      box.checked = picked.has(pointKey(cell));
+      box.disabled = cell.recommend !== 'RECOVER';
+      box.setAttribute('aria-label', `${pointText(cell)} ${labels[cell.state]}`);
+      box.addEventListener('change', () => {
+        if (box.checked) picked.add(pointKey(cell)); else picked.delete(pointKey(cell));
+        drawCandidates();
+        drawPicked();
+      });
+      return box;
+    }],
+    ['晶圆', 'wafer', 'mono'], ['坐标', (cell) => vector([cell.x, cell.y]), 'num'],
+    ['复测状态', (cell) => status(cell.recommend === 'RECOVER' ? 'RECOVER' : cell.state)],
+    ['末次', 'attempt', 'num'], ['分档', 'bin', 'num'],
+    ['依据行', (cell) => cell.evidence_ids.join(' · ') || '—'],
+    ['建议', (cell) => labels[cell.recommend]],
+  ], '此片边缘保留带没有可复核的复测行。');
+  q('#recovery-publish').disabled = picked.size === 0;
+}
+
+function drawPicked() {
+  const {preview, picked} = recoveryState;
+  const chosen = preview.cells.filter((cell) => picked.has(pointKey(cell)));
+  text('#recovery-picked', `${chosen.length} 枚`);
+  const target = q('#recovery-detail');
+  if (!chosen.length) {
+    target.replaceChildren(element('p', '勾选左侧芯粒以查看其复测链和原始行。', 'empty'));
+    return;
+  }
+  const box = element('div');
+  for (const cell of chosen) {
+    const card = element('article', null, 'recovery-cell');
+    card.append(element('div', null, 'detail-title'));
+    const title = card.firstChild;
+    title.append(element('strong', pointText(cell)), status('RECOVER'));
+    const chain = cell.history.map((step) => `T${step.attempt} ${labels[step.result] ?? step.result}${step.bin ? ` / BIN ${step.bin}` : ''}`).join(' → ') || '无可采测次';
+    card.append(element('p', `测次链：${chain}`, 'data-strip'));
+    for (const row of cell.evidence) {
+      const item = element('div', null, 'evidence-row');
+      item.append(element('div', null, 'evidence-id'));
+      item.firstChild.append(element('strong', `${row.source}:${row.line}`, 'mono'),
+        element('span', row.usable ? '采信为收回依据' : `${row.code} · ${labels[row.code] ?? row.code}`));
+      item.append(element('p', `T${row.attempt} ${row.result || '∅'} BIN ${row.bin || '∅'}${row.note ? `　${row.note}` : ''}`, 'evidence-values'));
+      card.append(item);
+    }
+    box.append(card);
+  }
+  target.replaceChildren(box);
+}
+
+function drawRetained() {
+  const {preview} = recoveryState;
+  const rows = preview.cells.filter((cell) => cell.evidence.length && cell.recommend !== 'RECOVER');
+  const noEvidence = preview.cells.filter((cell) => !cell.evidence.length).length;
+  text('#recovery-retained-total', `有依据保留 ${rows.length} 枚 · 无复测依据 ${noEvidence} 枚整体保留`);
+  table(q('#recovery-retained'), rows, [
+    ['晶圆', 'wafer', 'mono'], ['坐标', (cell) => vector([cell.x, cell.y]), 'num'],
+    ['状态', (cell) => status(cell.state)], ['末次', 'attempt', 'num'], ['分档', 'bin', 'num'],
+    ['依据行', (cell) => cell.evidence_ids.join(' · ')],
+    ['测次链', (cell) => cell.history.map((step) => `T${step.attempt} ${labels[step.result] ?? step.result}`).join(' → ')],
+  ], '边缘保留带没有留下有复测依据的芯粒。');
+}
+
+function drawEditions(selectId) {
+  const {preview} = recoveryState;
+  const editions = preview.editions;
+  text('#recovery-edition-total', `${editions.length} 版结论`);
+  const box = q('#recovery-editions');
+  if (!editions.length) {
+    box.replaceChildren(element('p', '本部图批尚未发布边缘收回结论。', 'empty'));
+    q('#recovery-conclusion').replaceChildren();
+    return;
+  }
+  const list = element('div', null, 'edition-list');
+  for (const edition of editions) {
+    const button = element('button', null, 'row-link');
+    button.type = 'button';
+    button.dataset.recovery = edition.recovery_id;
+    button.textContent = `${edition.recovery_id.slice(0, 12)} · ${edition.created_at.slice(0, 19).replace('T', ' ')} · 收回 ${edition.recovered}`;
+    button.setAttribute('aria-pressed', String(edition.recovery_id === selectId));
+    button.addEventListener('click', () => showEdition(edition.recovery_id));
+    list.append(button);
+  }
+  box.replaceChildren(list);
+  const active = selectId ?? editions[0].recovery_id;
+  showEdition(active);
+}
+
+async function showEdition(recoveryId) {
+  const {preview, runId, signal} = recoveryState;
+  const target = q('#recovery-conclusion');
+  target.replaceChildren(element('p', '正在读取结论…', 'empty'));
+  try {
+    const response = await fetch(`/api/runs/${runId}/recovery/${recoveryId}`, {signal});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.message ?? '读取结论失败');
+    if (signal.aborted) return;
+    for (const button of q('#recovery-editions').querySelectorAll('button')) {
+      button.setAttribute('aria-pressed', String(button.dataset.recovery === recoveryId));
+    }
+    const manifest = data.manifest;
+    const detail = data.detail;
+    const before = Object.fromEntries(preview.base.wafers.map((row) => [row.wafer, row]));
+    const node = element('div', null, 'conclusion');
+    node.append(pairs([['结论号', manifest.recovery_id], ['基准运行', manifest.run_id],
+      ['收回', `${manifest.recovered} 枚`], ['保留（有依据）', `${manifest.retained} 枚`]]));
+    const rows = detail.wafers.map((wafer) => ({...wafer,
+      before_valid: before[wafer.wafer].valid, before_pass: before[wafer.wafer].passed,
+      before_fail: before[wafer.wafer].failed, before_pending: before[wafer.wafer].pending,
+      before_conflict: before[wafer.wafer].conflict,
+      before_clusters: preview.base.clusters[wafer.wafer], before_yield: before[wafer.wafer].yield_pct}));
+    const tableBox = element('div', null, 'detail-group');
+    table(tableBox, rows, [
+      ['晶圆', 'wafer', 'mono'], ['收回', 'recovered', 'num'], ['保留', 'retained_with_evidence', 'num'],
+      ['有效 前→后', (row) => `${row.before_valid} → ${row.summary.valid}`, 'num'],
+      ['通过 前→后', (row) => `${row.before_pass} → ${row.summary.passed}`, 'num'],
+      ['失败 前→后', (row) => `${row.before_fail} → ${row.summary.failed}`, 'num'],
+      ['待测 前→后', (row) => `${row.before_pending} → ${row.summary.pending}`, 'num'],
+      ['冲突 前→后', (row) => `${row.before_conflict} → ${row.summary.conflict}`, 'num'],
+      ['簇 前→后', (row) => `${row.before_clusters} → ${row.clusters}`, 'num'],
+      ['良率 % 前→后', (row) => `${row.before_yield ?? '—'} → ${row.summary.yield_pct ?? '—'}`, 'num'],
+      ['台账差', (row) => row.delta ? Object.entries(row.delta).filter(([,value]) => value).map(([key,value]) => `${key} ${value > 0 ? '+' : ''}${value}`).join(' ') || '无' : '缺台账'],
+    ]);
+    node.append(tableBox);
+    const lot = element('div', null, 'pairs detail-group');
+    lot.append(element('dt', '批良率 前→后'), element('dd', `${preview.base.summary.yield_pct ?? '—'}% → ${data.summary.yield_pct ?? '—'}%`, 'mono'));
+    node.append(lot);
+    const evidence = element('div', null, 'detail-group');
+    evidence.append(element('h3', '收回芯粒依据行'));
+    for (const cell of detail.recovered) {
+      const card = element('article', null, 'recovery-cell');
+      card.append(element('p', `${pointText(cell)} → ${labels[cell.result]} / BIN ${cell.bin}`, 'data-strip'));
+      for (const id of cell.evidence) {
+        const row = data.rows.find((item) => item.id === id);
+        if (!row) continue;
+        const source = row.raw.join(' · ');
+        card.append(element('p', `${row.id}　${source}`, 'evidence-note'));
+      }
+      evidence.append(card);
+    }
+    node.append(evidence);
+    const kept = detail.retained.filter((cell) => cell.evidence.length);
+    if (kept.length) {
+      const keep = element('div', null, 'detail-group');
+      keep.append(element('h3', '仍应保留的边缘位'));
+      table(keep, kept, [['晶圆', 'wafer', 'mono'], ['坐标', (cell) => vector([cell.x, cell.y]), 'num'],
+        ['原因', 'reason'], ['依据行', (cell) => cell.evidence.join(' · ')]]);
+      node.append(keep);
+    }
+    const link = element('a', '导出收回证据 ↓', 'btn link-btn');
+    link.href = `/api/runs/${runId}/recovery/${manifest.recovery_id}/export`;
+    node.append(link);
+    target.replaceChildren(node);
+  } catch (error) {
+    if (!signal.aborted) failure(target, error);
+  }
+}
+
+async function edgeView(context) {
+  const {api, base, run, signal, params} = context;
+  const preview = await api(`${base}/recovery`);
+  recoveryState.preview = preview;
+  recoveryState.runId = run.run_id;
+  recoveryState.signal = signal;
+  recoveryState.picked = new Set();
+  drawCandidates();
+  drawPicked();
+  drawRetained();
+  drawEditions(params.get('edition'));
+
+  q('#recovery-select').addEventListener('click', () => {
+    recoveryState.picked = new Set(preview.recoverable.map(([wafer,x,y]) => `${wafer}|${x}|${y}`));
+    drawCandidates(); drawPicked();
+  }, {signal});
+  q('#recovery-clear').addEventListener('click', () => {
+    recoveryState.picked.clear(); drawCandidates(); drawPicked();
+  }, {signal});
+  q('#recovery-publish').addEventListener('click', async () => {
+    const button = q('#recovery-publish');
+    button.disabled = true;
+    button.textContent = '正在发布…';
+    try {
+      const selection = [...recoveryState.picked].map((key) => key.split('|')).map(([wafer, x, y]) => [wafer, Number(x), Number(y)]);
+      const response = await fetch(`${base}/recovery`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({selection}), signal});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.message ?? '发布失败');
+      const refreshed = await api(`${base}/recovery`);
+      recoveryState.preview = refreshed;
+      drawEditions(data.manifest.recovery_id);
+      q('#feedback').hidden = false;
+      q('#feedback').classList.remove('error');
+      q('#feedback').textContent = data.reused ? '相同收回选择已归档，复用原结论。' : '收回结论已发布。';
+    } catch (error) {
+      if (!signal.aborted) failure(q('#recovery-conclusion'), error);
+    } finally {
+      button.textContent = '发布收回结论';
+      button.disabled = recoveryState.picked.size === 0;
+    }
+  }, {signal});
+}
+
+export const views = {intake, coordinates, retest, clusters, yield: auditView, edge: edgeView, runs};

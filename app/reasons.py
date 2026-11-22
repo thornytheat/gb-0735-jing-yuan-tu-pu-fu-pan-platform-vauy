@@ -14,6 +14,13 @@ REASONS = {
     "BAD_BIN": "分档不符",
     "SAME_ATTEMPT_CONFLICT": "同次测值矛盾",
     "DUPLICATE_RESULT": "同次同值重复",
+    "RECOVERED": "边缘收回",
+    "EDGE_FAILURE": "边缘失效",
+    "REPEATED_EDGE_FAILURE": "边缘连续失效",
+    "EDGE_CONFLICT": "边缘复测冲突",
+    "NO_EDGE_EVIDENCE": "边缘无复测依据",
+    "BAD_EDGE_MEASUREMENT": "边缘测值无效",
+    "NOT_SELECTED": "未选收回",
 }
 
 

@@ -73,7 +73,7 @@ async function display(run, selected, manifests, params = new URLSearchParams())
   state.run = run;
   state.wafer = wafer;
   options(waferSelect, run.wafers.map((id) => [id, id]), wafer);
-  labelsFor(run, wafer, ['yield','runs','intake','coordinates'].includes(stage) ? audit.summary : audit.wafers.find((row) => row.wafer === wafer));
+  labelsFor(run, wafer, ['yield','runs','intake','coordinates','edge'].includes(stage) ? audit.summary : audit.wafers.find((row) => row.wafer === wafer));
   runAddress(params, run, wafer);
   exportLink.href = `${base}/export`;
   exportLink.hidden = false;

@@ -1,0 +1,26 @@
+<div class="grid split">
+  <section class="panel">
+    <div class="panel__head">
+      <div><h2>边缘保留带逐片复核</h2><span class="panel__meta" id="recovery-scope">—</span></div>
+      <div class="recovery-actions">
+        <button class="btn" id="recovery-select" type="button">全选可收回</button>
+        <button class="btn" id="recovery-clear" type="button">清空选择</button>
+        <button class="btn primary" id="recovery-publish" type="button" disabled>发布收回结论</button>
+      </div>
+    </div>
+    <div class="table-scroll tall" id="recovery-candidates"></div>
+  </section>
+  <section class="panel">
+    <div class="panel__head"><div><h2>收回依据与保留边缘</h2><span class="panel__meta" id="recovery-picked">—</span></div></div>
+    <div class="panel__body detail-scroll" id="recovery-detail" aria-live="polite"></div>
+  </section>
+</div>
+<section class="panel below">
+  <div class="panel__head"><div><h2>保留边缘（有复测依据）</h2><span class="panel__meta" id="recovery-retained-total">—</span></div></div>
+  <div class="table-scroll" id="recovery-retained"></div>
+</section>
+<section class="panel below">
+  <div class="panel__head"><div><h2>收回结论与重算差额</h2><span class="panel__meta" id="recovery-edition-total">—</span></div></div>
+  <div class="panel__body" id="recovery-editions"></div>
+  <div class="panel__body" id="recovery-conclusion" aria-live="polite"></div>
+</section>

@@ -72,3 +72,10 @@
 .map-caption { min-height: 28px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px; align-items: center; padding: 4px 8px; border-top: 1px solid var(--line); color: var(--ink-3); font: 10px var(--mono); }
 @media (max-width: 660px) { .map-viewport { height: 354px; } .wafer-grid .ruler-y { min-width: 28px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.recovery-cell { border: 1px solid var(--line); padding: 6px 7px; margin-top: 6px; }
+.recovery-cell p { overflow-wrap: anywhere; white-space: pre-wrap; }
+.conclusion h3 { margin: 8px 0 4px; font-size: 12px; color: var(--ink-2); }
+.conclusion > a { display: inline-flex; margin-top: 8px; }
+.edition-list { display: flex; flex-wrap: wrap; gap: 5px; }
+#recovery-conclusion .ledger { margin-top: 8px; }

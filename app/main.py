@@ -10,6 +10,8 @@ from app.config import DEFAULT_SAMPLE, ROOT, database_path
 from app.errors import ReviewError
 from app.modules.clusters import handler as clusters
 from app.modules.coordinates import handler as coordinates
+from app.modules.edge_recovery import handler as edge_recovery
+from app.modules.edge_recovery.service import RecoveryService
 from app.modules.intake import handler as intake
 from app.modules.mask import handler as mask
 from app.modules.retest import handler as retest
@@ -29,9 +31,11 @@ def create_app(db=None, seed=True):
         yield
 
     instance = FastAPI(title="晶圆图谱复判台", lifespan=lifespan)
-    instance.state.runs = RunService(RunStore(db or database_path()))
+    store = RunStore(db or database_path())
+    instance.state.runs = RunService(store)
+    instance.state.recoveries = RecoveryService(store)
     instance.mount("/static", StaticFiles(directory=ROOT / "app/static"), name="static")
-    for module in (intake, coordinates, mask, retest, clusters, yield_audit, runs):
+    for module in (intake, coordinates, mask, retest, clusters, yield_audit, runs, edge_recovery):
         instance.include_router(module.router)
     instance.include_router(web)
     instance.add_exception_handler(ReviewError, review_error)
